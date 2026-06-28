@@ -1,0 +1,95 @@
+---
+- name: Astra Linux Hardening
+  hosts: localhost
+  connection: local
+  become: yes
+
+  tasks:
+    - name: Обновление системы
+      apt:
+        update_cache: yes
+        upgrade: dist
+
+    - name: Установка ufw
+      apt:
+        name: ufw
+        state: present
+
+    - name: Разрешить SSH в ufw
+      ufw:
+        rule: allow
+        name: OpenSSH
+
+    - name: Включить ufw
+      ufw:
+        state: enabled
+        policy: deny
+        direction: incoming
+      notify: restart ssh
+
+    - name: Отключить ненужные службы
+      systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: no
+      loop:
+        - cups
+        - bluetooth
+        - avahi-daemon
+      ignore_errors: yes
+
+    - name: Установка политики паролей
+      apt:
+        name: libpam-pwquality
+        state: present
+
+    - name: Настройка политики паролей
+      lineinfile:
+        path: /etc/pam.d/common-password
+        regexp: '^password.*requisite.*pam_pwquality.so'
+        line: 'password requisite pam_pwquality.so retry=3 minlen=12 difok=3 ucredit=-1 lcredit=-1 dcredit=-1 reject_username enforce_for_root'
+        backup: yes
+
+    - name: Установка unattended-upgrades
+      apt:
+        name: unattended-upgrades
+        state: present
+
+    - name: Настройка автообновлений
+      copy:
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Download-Upgradeable-Packages "1";
+          APT::Periodic::AutocleanInterval "7";
+          APT::Periodic::Unattended-Upgrade "1";
+
+    - name: Установка auditd
+      apt:
+        name: auditd
+        state: present
+
+    - name: Включение auditd
+      systemd:
+        name: auditd
+        enabled: yes
+        state: started
+
+    - name: Настройка SSH (запрет root-входа с паролем)
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PermitRootLogin'
+        line: 'PermitRootLogin prohibit-password'
+
+    - name: Настройка SSH (отключение парольной аутентификации)
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+      notify: restart ssh
+
+  handlers:
+    - name: restart ssh
+      systemd:
+        name: ssh
+        state: restarted
